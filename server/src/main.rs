@@ -1,11 +1,14 @@
 mod model;
 
-use actix_web::{get, post, web, App, HttpResponse, HttpServer, Responder};
+use actix_cors::Cors;
+use actix_web::{
+    get, http::header, post, web, App, HttpResponse, HttpServer, Responder,
+};
 use dotenv::dotenv;
 use mongodb::{bson::doc, Client, Collection};
 use rand::Rng;
-use std::env;
 use server::Alphabet;
+use std::env;
 
 use model::{Links, ReqBody};
 
@@ -21,7 +24,10 @@ fn get_random_string(length: usize) -> String {
 }
 
 #[post("/")]
-async fn add_link(client: web::Data<Client>, form: web::Json<ReqBody>) -> impl Responder {
+async fn add_link(
+    client: web::Data<Client>,
+    form: web::Json<ReqBody>,
+) -> impl Responder {
     let collection: Collection<Links> =
         client.database(DB_NAME).collection(COL_NAME);
     let random_string = get_random_string(4);
@@ -35,12 +41,8 @@ async fn add_link(client: web::Data<Client>, form: web::Json<ReqBody>) -> impl R
     let result = collection.insert_one(new_doc, None).await;
 
     match result {
-        Ok(_) => {
-            HttpResponse::Ok()
-                .body(format!("http://localhost:8000/{}", random_string))
-        }
-        Err(err) => HttpResponse::InternalServerError()
-            .body(err.to_string())
+        Ok(_) => HttpResponse::Ok().body(format!("{}", random_string)),
+        Err(err) => HttpResponse::InternalServerError().body(err.to_string()),
     }
 }
 
@@ -74,8 +76,12 @@ async fn main() -> std::io::Result<()> {
     // env_logger::init();
 
     let mongo_uri = match env::var("MONGOURI") {
-        Ok(v) => v.to_string(),
+        Ok(v) => v,
         Err(_) => "mongodb://localhost:27017".to_string(),
+    };
+    let client_uri = match env::var("CLIENT") {
+        Ok(v) => v,
+        Err(_) => "http://localhost:3000".to_string(),
     };
 
     let client = Client::with_uri_str(mongo_uri)
@@ -84,6 +90,18 @@ async fn main() -> std::io::Result<()> {
 
     HttpServer::new(move || {
         App::new()
+            .wrap(
+                Cors::default()
+                    .allowed_origin(&client_uri)
+                    .allowed_methods(vec!["GET", "POST"])
+                    .allowed_headers(vec![
+                        header::AUTHORIZATION,
+                        header::ACCEPT,
+                    ])
+                    .allowed_header(header::CONTENT_TYPE)
+                    .supports_credentials()
+                    .max_age(3600),
+            )
             // .wrap(middleware::Logger::default())
             .app_data(web::Data::new(client.clone()))
             .service(add_link)
